@@ -92,6 +92,48 @@
         ],
         "type": "object"
       },
+      "CreateFootnoteOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "end_of_segment": {
+            "default": false,
+            "description": "Append at end of body instead of using index.",
+            "type": "boolean"
+          },
+          "index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Insertion index. Omit when end_of_segment=true."
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "create_footnote",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
       "CreateHeaderFooterOperation": {
         "additionalProperties": false,
         "properties": {
@@ -211,6 +253,64 @@
         "required": [
           "type",
           "tab_id"
+        ],
+        "type": "object"
+      },
+      "DeleteFooterOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "footer_id": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "delete_footer",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "footer_id"
+        ],
+        "type": "object"
+      },
+      "DeleteHeaderOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "header_id": {
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional document tab ID to target."
+          },
+          "type": {
+            "const": "delete_header",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "header_id"
         ],
         "type": "object"
       },
@@ -2029,9 +2129,12 @@
           "discriminator": {
             "mapping": {
               "create_bullet_list": "#/$defs/CreateBulletListOperation",
+              "create_footnote": "#/$defs/CreateFootnoteOperation",
               "create_header_footer": "#/$defs/CreateHeaderFooterOperation",
               "create_named_range": "#/$defs/CreateNamedRangeOperation",
               "delete_doc_tab": "#/$defs/DeleteDocTabOperation",
+              "delete_footer": "#/$defs/DeleteFooterOperation",
+              "delete_header": "#/$defs/DeleteHeaderOperation",
               "delete_named_range": "#/$defs/DeleteNamedRangeOperation",
               "delete_table_column": "#/$defs/DeleteTableColumnOperation",
               "delete_table_row": "#/$defs/DeleteTableRowOperation",
@@ -2131,6 +2234,15 @@
             },
             {
               "$ref": "#/$defs/CreateHeaderFooterOperation"
+            },
+            {
+              "$ref": "#/$defs/CreateFootnoteOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteHeaderOperation"
+            },
+            {
+              "$ref": "#/$defs/DeleteFooterOperation"
             },
             {
               "$ref": "#/$defs/InsertImageOperation"

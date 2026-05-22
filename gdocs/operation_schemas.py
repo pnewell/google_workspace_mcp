@@ -353,6 +353,34 @@ class CreateHeaderFooterOperation(StrictDocOperation):
     )
 
 
+class CreateFootnoteOperation(StrictDocOperation):
+    type: Literal["create_footnote"]
+    index: Optional[int] = Field(
+        default=None,
+        description="Insertion index. Omit when end_of_segment=true.",
+    )
+    end_of_segment: bool = Field(
+        default=False,
+        description="Append at end of body instead of using index.",
+    )
+
+    @model_validator(mode="after")
+    def validate_location(self) -> "CreateFootnoteOperation":
+        if self.end_of_segment == (self.index is not None):
+            raise ValueError("Provide exactly one of 'index' or 'end_of_segment=true'.")
+        return self
+
+
+class DeleteHeaderOperation(StrictDocOperation):
+    type: Literal["delete_header"]
+    header_id: str
+
+
+class DeleteFooterOperation(StrictDocOperation):
+    type: Literal["delete_footer"]
+    footer_id: str
+
+
 class InsertImageOperation(SegmentTargetDocOperation):
     type: Literal["insert_image"]
     image_uri: str = Field(description="Image URL or resolvable image URI.")
@@ -424,6 +452,9 @@ BatchDocOperation = Annotated[
         UpdateDocumentStyleOperation,
         UpdateSectionStyleOperation,
         CreateHeaderFooterOperation,
+        CreateFootnoteOperation,
+        DeleteHeaderOperation,
+        DeleteFooterOperation,
         InsertImageOperation,
         InsertDocTabOperation,
         DeleteDocTabOperation,

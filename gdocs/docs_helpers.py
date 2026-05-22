@@ -1487,6 +1487,41 @@ def create_create_header_footer_request(
     raise ValueError("section_type must be 'header' or 'footer'")
 
 
+def create_create_footnote_request(
+    index: Optional[int],
+    end_of_segment: bool = False,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a createFootnote request."""
+    return {
+        "createFootnote": _build_location(
+            index=index, tab_id=tab_id, end_of_segment=end_of_segment
+        )
+    }
+
+
+def create_delete_header_request(
+    header_id: str, tab_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Build a deleteHeader request."""
+    request: Dict[str, Any] = {"headerId": header_id}
+    tabs_criteria = _build_tabs_criteria(tab_id)
+    if tabs_criteria:
+        request["tabsCriteria"] = tabs_criteria
+    return {"deleteHeader": request}
+
+
+def create_delete_footer_request(
+    footer_id: str, tab_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Build a deleteFooter request."""
+    request: Dict[str, Any] = {"footerId": footer_id}
+    tabs_criteria = _build_tabs_criteria(tab_id)
+    if tabs_criteria:
+        request["tabsCriteria"] = tabs_criteria
+    return {"deleteFooter": request}
+
+
 def create_insert_table_row_request(
     table_start_index: int,
     row_index: int,
@@ -1697,6 +1732,9 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "update_document_style": [],
         "update_section_style": ["start_index", "end_index"],
         "create_header_footer": ["section_type"],
+        "create_footnote": [],
+        "delete_header": ["header_id"],
+        "delete_footer": ["footer_id"],
         "insert_image": ["image_uri"],
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
@@ -1735,6 +1773,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_page_break",
         "insert_section_break",
         "insert_image",
+        "create_footnote",
     }:
         end_of_segment = operation.get("end_of_segment", False)
         if end_of_segment and "index" in operation:

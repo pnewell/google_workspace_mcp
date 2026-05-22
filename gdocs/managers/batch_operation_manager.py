@@ -28,6 +28,9 @@ from gdocs.docs_helpers import (
     create_update_document_style_request,
     create_update_section_style_request,
     create_create_header_footer_request,
+    create_create_footnote_request,
+    create_delete_header_request,
+    create_delete_footer_request,
     create_insert_doc_tab_request,
     create_delete_doc_tab_request,
     create_update_doc_tab_request,
@@ -135,6 +138,9 @@ class BatchOperationManager:
             if created_tabs:
                 metadata["created_tabs"] = created_tabs
 
+            response_ids = self._extract_response_ids(result)
+            metadata.update(response_ids)
+
             summary = self._build_operation_summary(operation_descriptions)
             msg = f"Successfully executed {len(operations)} operations ({summary})"
             if created_tabs:
@@ -142,6 +148,21 @@ class BatchOperationManager:
                     f"'{t['title']}' (tab_id: {t['tab_id']})" for t in created_tabs
                 )
                 msg += f". Created tabs: {tab_info}"
+            if response_ids.get("created_headers"):
+                ids = ", ".join(
+                    item["header_id"] for item in response_ids["created_headers"]
+                )
+                msg += f". Created headers: {ids}"
+            if response_ids.get("created_footers"):
+                ids = ", ".join(
+                    item["footer_id"] for item in response_ids["created_footers"]
+                )
+                msg += f". Created footers: {ids}"
+            if response_ids.get("created_footnotes"):
+                ids = ", ".join(
+                    item["footnote_id"] for item in response_ids["created_footnotes"]
+                )
+                msg += f". Created footnotes: {ids}"
 
             return True, msg, metadata
 
@@ -695,6 +716,24 @@ class BatchOperationManager:
             )
             description = f"create {op['section_type']} ({op.get('header_footer_type', 'DEFAULT')})"
 
+        elif op_type == "create_footnote":
+            request = create_create_footnote_request(
+                op.get("index"), op.get("end_of_segment", False), tab_id
+            )
+            description = (
+                "create footnote at end of body"
+                if op.get("end_of_segment")
+                else f"create footnote at {op['index']}"
+            )
+
+        elif op_type == "delete_header":
+            request = create_delete_header_request(op["header_id"], tab_id)
+            description = f"delete header {op['header_id']}"
+
+        elif op_type == "delete_footer":
+            request = create_delete_footer_request(op["footer_id"], tab_id)
+            description = f"delete footer {op['footer_id']}"
+
         elif op_type == "insert_image":
             request = create_insert_image_request(
                 op.get("index"),
@@ -831,6 +870,9 @@ class BatchOperationManager:
                 "update_document_style",
                 "update_section_style",
                 "create_header_footer",
+                "create_footnote",
+                "delete_header",
+                "delete_footer",
                 "insert_image",
                 "insert_doc_tab",
                 "delete_doc_tab",
@@ -892,6 +934,38 @@ class BatchOperationManager:
                         created_tabs.append({"tab_id": tab_id, "title": title})
                     break
         return created_tabs
+
+    def _extract_response_ids(self, result: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+        """
+        Extract segment IDs from create_header/footer/footnote replies.
+
+        Args:
+            result: The batchUpdate API response
+
+        Returns:
+            Populated buckets among created_headers, created_footers, created_footnotes
+        """
+        buckets: dict[str, list[dict[str, str]]] = {}
+        for reply in result.get("replies", []):
+            if "createHeader" in reply:
+                header_id = reply["createHeader"].get("headerId")
+                if header_id:
+                    buckets.setdefault("created_headers", []).append(
+                        {"header_id": header_id}
+                    )
+            if "createFooter" in reply:
+                footer_id = reply["createFooter"].get("footerId")
+                if footer_id:
+                    buckets.setdefault("created_footers", []).append(
+                        {"footer_id": footer_id}
+                    )
+            if "createFootnote" in reply:
+                footnote_id = reply["createFootnote"].get("footnoteId")
+                if footnote_id:
+                    buckets.setdefault("created_footnotes", []).append(
+                        {"footnote_id": footnote_id}
+                    )
+        return buckets
 
     def _build_operation_summary(self, operation_descriptions: list[str]) -> str:
         """
@@ -1113,6 +1187,21 @@ class BatchOperationManager:
                     "required": ["section_type"],
                     "optional": ["header_footer_type", "section_break_index"],
                     "description": "Create a header or footer, optionally tied to a section break",
+                },
+                "create_footnote": {
+                    "required": [],
+                    "optional": ["index", "end_of_segment", "tab_id"],
+                    "description": "Insert a footnote at a body location",
+                },
+                "delete_header": {
+                    "required": ["header_id"],
+                    "optional": ["tab_id"],
+                    "description": "Delete a header by its segment ID",
+                },
+                "delete_footer": {
+                    "required": ["footer_id"],
+                    "optional": ["tab_id"],
+                    "description": "Delete a footer by its segment ID",
                 },
                 "insert_image": {
                     "required": ["image_uri"],

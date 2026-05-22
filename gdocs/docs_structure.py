@@ -148,6 +148,14 @@ def _parse_table_cells(table: dict[str, Any]) -> list[list[dict[str, Any]]]:
                             insertion_index = first_element["startIndex"]
                             break
 
+            element_summaries = [
+                summary
+                for summary in (
+                    _summarize_element(el) for el in content_elements
+                )
+                if summary is not None
+            ]
+
             cell_info = {
                 "row": row_idx,
                 "column": col_idx,
@@ -156,6 +164,7 @@ def _parse_table_cells(table: dict[str, Any]) -> list[list[dict[str, Any]]]:
                 "insertion_index": insertion_index,  # Where to insert text in this cell
                 "content": _extract_cell_text(cell),
                 "content_elements": content_elements,
+                "elements": element_summaries,
             }
             row_cells.append(cell_info)
         cells.append(row_cells)
@@ -181,12 +190,18 @@ def _extract_cell_text(cell: dict[str, Any]) -> str:
 
 
 def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
-    """Parse a document segment (header/footer)."""
+    """Parse a document segment (header/footer/footnote)."""
     content = segment_data.get("content", [])
     text_parts = []
     for element in content:
         if "paragraph" in element:
             text_parts.append(_extract_paragraph_text(element["paragraph"]))
+
+    element_summaries = [
+        summary
+        for summary in (_summarize_element(el) for el in content)
+        if summary is not None
+    ]
 
     return {
         "content": content,
@@ -194,6 +209,81 @@ def _parse_segment(segment_data: dict[str, Any]) -> dict[str, Any]:
         "end_index": content[-1].get("endIndex", 0) if content else 0,
         "text_preview": "".join(text_parts)[:100],
         "element_count": len(content),
+        "elements": element_summaries,
+    }
+
+
+def _summarize_element(element: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """
+    Summarize a single structural element.
+
+    Args:
+        element: Structural element from a Docs API response
+
+    Returns:
+        Summary dict, or None for unrecognised element types
+    """
+    start_index = element.get("startIndex", 0)
+    end_index = element.get("endIndex", 0)
+
+    if "paragraph" in element:
+        paragraph = element["paragraph"]
+        return {
+            "type": "paragraph",
+            "start_index": start_index,
+            "end_index": end_index,
+            "text_preview": _extract_paragraph_text(paragraph)[:100],
+        }
+
+    if "table" in element:
+        table = element["table"]
+        rows = table.get("tableRows", [])
+        column_count = len(rows[0].get("tableCells", [])) if rows else 0
+        parsed_cells = _parse_table_cells(table)
+        cells = [
+            {
+                "row": cell["row"],
+                "column": cell["column"],
+                "start_index": cell["start_index"],
+                "end_index": cell["end_index"],
+                "elements": cell["elements"],
+            }
+            for row in parsed_cells
+            for cell in row
+        ]
+        return {
+            "type": "table",
+            "start_index": start_index,
+            "end_index": end_index,
+            "rows": len(rows),
+            "columns": column_count,
+            "cell_count": len(cells),
+            "cells": cells,
+        }
+
+    if "sectionBreak" in element:
+        return {
+            "type": "sectionBreak",
+            "start_index": start_index,
+            "end_index": end_index,
+        }
+
+    return None
+
+
+def parse_footnotes(doc_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """
+    Parse the document's footnotes.
+
+    Args:
+        doc_data: Raw document data from Google Docs API
+
+    Returns:
+        Mapping of footnote ID to parsed segment dict
+    """
+    return {
+        footnote_id: _parse_segment(footnote_data)
+        for footnote_id, footnote_data in doc_data.get("footnotes", {}).items()
     }
 
 

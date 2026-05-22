@@ -51,6 +51,7 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    parse_footnotes,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -1239,6 +1240,13 @@ async def batch_update_doc(
                          optional: header_footer_type, section_break_index
                          Advanced only. For ordinary header/footer text, use
                          update_doc_headers_footers instead.
+      create_footnote  - required: (none)
+                         optional: index (int), end_of_segment (bool), tab_id
+                         Provide exactly one of 'index' or 'end_of_segment=true'.
+      delete_header    - required: header_id (str)
+                         optional: tab_id
+      delete_footer    - required: footer_id (str)
+                         optional: tab_id
       insert_image     - required: image_uri (str)
                          optional: index, width, height, tab_id, segment_id,
                                    end_of_segment
@@ -1437,6 +1445,7 @@ async def inspect_doc_structure(
     if tab_id and document_tab:
         analysis_doc["headers"] = document_tab.get("headers", {})
         analysis_doc["footers"] = document_tab.get("footers", {})
+        analysis_doc["footnotes"] = document_tab.get("footnotes", {})
         analysis_doc["documentStyle"] = document_tab.get("documentStyle", {})
     elif not tab_id and doc.get("tabs"):
         # Default to the first document tab for tab-aware header/footer inspection.
@@ -1453,6 +1462,7 @@ async def inspect_doc_structure(
         if first_tab_doc:
             analysis_doc["headers"] = first_tab_doc.get("headers", {})
             analysis_doc["footers"] = first_tab_doc.get("footers", {})
+            analysis_doc["footnotes"] = first_tab_doc.get("footnotes", {})
             analysis_doc["documentStyle"] = first_tab_doc.get("documentStyle", {})
 
     structure = parse_document_structure(analysis_doc)
@@ -1499,6 +1509,17 @@ async def inspect_doc_structure(
             result["tables"] = []
             for i, table in enumerate(structure["tables"]):
                 table_data = extract_table_as_data(table)
+                cells = [
+                    {
+                        "row": cell["row"],
+                        "column": cell["column"],
+                        "start_index": cell["start_index"],
+                        "end_index": cell["end_index"],
+                        "elements": cell["elements"],
+                    }
+                    for row in table.get("cells", [])
+                    for cell in row
+                ]
                 result["tables"].append(
                     {
                         "index": i,
@@ -1511,6 +1532,7 @@ async def inspect_doc_structure(
                             "columns": table["columns"],
                         },
                         "preview": table_data[:3] if table_data else [],  # First 3 rows
+                        "cells": cells,
                     }
                 )
 
@@ -1560,6 +1582,20 @@ async def inspect_doc_structure(
         footer_entries = _build_segment_inspection_entries(doc, structure, "footer")
         if footer_entries:
             result["footers"] = footer_entries
+
+    parsed_footnotes = parse_footnotes(analysis_doc)
+    if parsed_footnotes:
+        result["footnotes"] = {
+            footnote_id: {
+                "segment_id": footnote_id,
+                "start_index": footnote["start_index"],
+                "end_index": footnote["end_index"],
+                "content_preview": footnote.get("text_preview", ""),
+                "element_count": footnote.get("element_count", 0),
+                "elements": footnote.get("elements", []),
+            }
+            for footnote_id, footnote in parsed_footnotes.items()
+        }
 
     # Always include available tabs if no tab_id was specified
     if not tab_id:
@@ -1625,6 +1661,7 @@ def _build_segment_inspection_entries(
             "content_preview": segment_info.get("text_preview", ""),
             "element_count": segment_info.get("element_count", 0),
             "source": "segment_content",
+            "elements": segment_info.get("elements", []),
         }
 
     style_field_map = {
@@ -1651,6 +1688,7 @@ def _build_segment_inspection_entries(
                 "element_count": 0,
                 "source": f"documentStyle.{style_field}",
                 "variant": variant,
+                "elements": [],
             }
 
         for element in doc.get("body", {}).get("content", []):
@@ -1667,6 +1705,7 @@ def _build_segment_inspection_entries(
                     "element_count": 0,
                     "source": f"sectionStyle.{style_field}",
                     "variant": variant,
+                    "elements": [],
                 }
             break
 
