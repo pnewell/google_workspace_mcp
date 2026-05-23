@@ -25,7 +25,7 @@ class TestCreateDeleteHeaderRequest:
         assert result == {
             "deleteHeader": {
                 "headerId": "hdr-123",
-                "tabsCriteria": {"tabIds": ["t.abc"]},
+                "tabId": "t.abc",
             }
         }
 

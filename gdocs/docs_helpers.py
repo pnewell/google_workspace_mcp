@@ -1574,9 +1574,8 @@ def create_delete_header_request(
 ) -> Dict[str, Any]:
     """Build a deleteHeader request."""
     request: Dict[str, Any] = {"headerId": header_id}
-    tabs_criteria = _build_tabs_criteria(tab_id)
-    if tabs_criteria:
-        request["tabsCriteria"] = tabs_criteria
+    if tab_id:
+        request["tabId"] = tab_id
     return {"deleteHeader": request}
 
 
@@ -1585,9 +1584,8 @@ def create_delete_footer_request(
 ) -> Dict[str, Any]:
     """Build a deleteFooter request."""
     request: Dict[str, Any] = {"footerId": footer_id}
-    tabs_criteria = _build_tabs_criteria(tab_id)
-    if tabs_criteria:
-        request["tabsCriteria"] = tabs_criteria
+    if tab_id:
+        request["tabId"] = tab_id
     return {"deleteFooter": request}
 
 
