@@ -1202,8 +1202,8 @@ def create_bullet_list_request(
         doc_tab_id: Optional ID of the tab to target
 
     Returns:
-        List of request dictionaries (insertText for nesting tabs if needed,
-        then createParagraphBullets)
+        List of request dictionaries (deleteParagraphBullets, optional insertText
+        for nesting tabs, then createParagraphBullets)
     """
     start_index = _normalize_body_start_index(start_index, doc_tab_id, segment_id)
 
@@ -1226,7 +1226,13 @@ def create_bullet_list_request(
         if nesting_level < 0 or nesting_level > 8:
             raise ValueError("nesting_level must be between 0 and 8")
 
-    requests = []
+    # createParagraphBullets does not absorb leading tabs on an already-bulleted paragraph.
+    # deleteParagraphBullets on the range first so create can absorb them; no-op if not bulleted.
+    requests = [
+        create_delete_bullet_list_request(
+            start_index, end_index, doc_tab_id, segment_id=segment_id
+        )
+    ]
 
     # Insert tabs for nesting if needed (nesting_level > 0).
     # For multi-paragraph ranges, callers should provide paragraph_start_indices.
