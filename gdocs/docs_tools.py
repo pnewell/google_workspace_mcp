@@ -1120,7 +1120,6 @@ async def batch_update_doc(
          "list_type": "ORDERED"}
       ]
       For table cells, take start/end ranges from tables[].cells[].elements[].
-      Re-inspect after create_bullet_list before format_text (tab absorption shifts indices).
 
     ALTERNATIVE - FIND_REPLACE PATTERN (no indices needed at all):
       Insert text with unique placeholders, then use find_replace:
