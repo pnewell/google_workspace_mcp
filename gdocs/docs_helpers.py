@@ -5,6 +5,7 @@ This module provides utility functions for common Google Docs operations
 to simplify the implementation of document editing tools.
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 
@@ -1274,6 +1275,74 @@ def create_bullet_list_request(
     )
 
     return requests
+
+
+async def get_paragraph_start_indices_in_range(
+    service: Any,
+    document_id: str,
+    start_index: int,
+    end_index: int,
+    tab_id: Optional[str] = None,
+) -> list[int]:
+    """
+    Fetch paragraph start indices that overlap a target range.
+
+    Walks both top-level body paragraphs and paragraphs inside table cells
+    so that nesting_level tab-insertion targets every paragraph in the range.
+    """
+    from gdocs.docs_structure import parse_document_structure
+
+    fields = (
+        "body/content(startIndex,endIndex,paragraph,"
+        "table(tableRows(tableCells(content(startIndex,endIndex,paragraph)))))"
+    )
+
+    if tab_id:
+        doc_data = await asyncio.to_thread(
+            service.documents()
+            .get(
+                documentId=document_id,
+                includeTabsContent=True,
+                fields=f"tabs(tabProperties(tabId),documentTab({fields}))",
+            )
+            .execute
+        )
+        body = {}
+        for tab in doc_data.get("tabs", []):
+            if tab.get("tabProperties", {}).get("tabId") == tab_id:
+                body = tab.get("documentTab", {}).get("body", {})
+                break
+    else:
+        doc_data = await asyncio.to_thread(
+            service.documents()
+            .get(documentId=document_id, fields=fields)
+            .execute
+        )
+        body = doc_data.get("body", {})
+
+    structure = parse_document_structure({"body": body})
+
+    paragraph_starts = []
+    for element in structure["body"]:
+        el_start = element.get("start_index", 0)
+        el_end = element.get("end_index", 0)
+
+        if element["type"] == "paragraph":
+            if el_end > start_index and el_start < end_index:
+                paragraph_starts.append(el_start)
+
+        elif element["type"] == "table":
+            for row in element.get("cells", []):
+                for cell in row:
+                    for para in cell.get("elements", []):
+                        if para.get("type") != "paragraph":
+                            continue
+                        p_start = para.get("start_index", 0)
+                        p_end = para.get("end_index", 0)
+                        if p_end > start_index and p_start < end_index:
+                            paragraph_starts.append(p_start)
+
+    return sorted(set(paragraph_starts)) or [start_index]
 
 
 def create_delete_bullet_list_request(

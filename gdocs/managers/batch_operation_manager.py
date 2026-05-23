@@ -102,7 +102,7 @@ class BatchOperationManager:
 
             # Validate and build requests
             requests, operation_descriptions = await self._validate_and_build_requests(
-                operations
+                operations, document_id
             )
 
             if not requests:
@@ -246,13 +246,14 @@ class BatchOperationManager:
         return None
 
     async def _validate_and_build_requests(
-        self, operations: list[dict[str, Any]]
+        self, operations: list[dict[str, Any]], document_id: str = ""
     ) -> tuple[list[dict[str, Any]], list[str]]:
         """
         Validate operations and build API requests.
 
         Args:
             operations: List of operation dictionaries
+            document_id: Document ID (used for paragraph index lookup)
 
         Returns:
             Tuple of (requests, operation_descriptions)
@@ -267,6 +268,26 @@ class BatchOperationManager:
                 raise ValueError(f"Operation {i + 1}: {error_msg}")
 
             op_type = op.get("type")
+
+            if (
+                op_type == "create_bullet_list"
+                and op.get("nesting_level", 0) > 0
+                and not op.get("paragraph_start_indices")
+                and op.get("list_type", "UNORDERED") != "NONE"
+                and document_id
+            ):
+                from gdocs.docs_helpers import get_paragraph_start_indices_in_range
+
+                op = dict(op)
+                op["paragraph_start_indices"] = (
+                    await get_paragraph_start_indices_in_range(
+                        self.service,
+                        document_id,
+                        op["start_index"],
+                        op["end_index"],
+                        op.get("tab_id"),
+                    )
+                )
 
             try:
                 # Build request based on operation type

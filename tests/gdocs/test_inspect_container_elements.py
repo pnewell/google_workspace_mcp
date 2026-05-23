@@ -326,3 +326,39 @@ class TestInspectDocStructureContainerIntegration:
         tail_paragraph = outer_cell_summary["elements"][1]
         assert tail_paragraph["type"] == "paragraph"
         assert tail_paragraph["text_preview"] == "tail"
+
+
+class TestGetParagraphStartIndicesInRange:
+    """Verify paragraph-start lookup walks into table cells."""
+
+    @pytest.mark.asyncio
+    async def test_returns_cell_paragraph_starts(self):
+        from gdocs.docs_helpers import get_paragraph_start_indices_in_range
+
+        body = {
+            "content": [
+                _paragraph_element(1, 10, "Top\n"),
+                _table_element(
+                    10,
+                    60,
+                    rows=1,
+                    columns=2,
+                    cell_factory=lambda r, c: _simple_cell(
+                        11 + c * 20, 30 + c * 20, f"cell{c}\n"
+                    ),
+                ),
+            ]
+        }
+        service = Mock()
+        service.documents.return_value.get.return_value.execute.return_value = {
+            "body": body,
+        }
+
+        result = await get_paragraph_start_indices_in_range(
+            service, "doc123", 1, 60
+        )
+
+        assert 1 in result
+        assert 12 in result
+        assert 32 in result
+        assert len(result) == 3

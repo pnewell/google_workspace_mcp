@@ -44,6 +44,7 @@ from gdocs.docs_helpers import (
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
     create_update_paragraph_style_request,
+    get_paragraph_start_indices_in_range,
 )
 
 # Import document structure and table utilities
@@ -1118,6 +1119,8 @@ async def batch_update_doc(
         {"type": "create_bullet_list", "start_index": 50, "end_index": 120,
          "list_type": "ORDERED"}
       ]
+      For table cells, take start/end ranges from tables[].cells[].elements[].
+      Re-inspect after create_bullet_list before format_text (tab absorption shifts indices).
 
     ALTERNATIVE - FIND_REPLACE PATTERN (no indices needed at all):
       Insert text with unique placeholders, then use find_replace:
@@ -2087,35 +2090,6 @@ async def export_doc_to_pdf(
 # ==============================================================================
 
 
-async def _get_paragraph_start_indices_in_range(
-    service: Any, document_id: str, start_index: int, end_index: int
-) -> list[int]:
-    """
-    Fetch paragraph start indices that overlap a target range.
-    """
-    doc_data = await asyncio.to_thread(
-        service.documents()
-        .get(
-            documentId=document_id,
-            fields="body/content(startIndex,endIndex,paragraph)",
-        )
-        .execute
-    )
-
-    paragraph_starts = []
-    for element in doc_data.get("body", {}).get("content", []):
-        if "paragraph" not in element:
-            continue
-        paragraph_start = element.get("startIndex")
-        paragraph_end = element.get("endIndex")
-        if not isinstance(paragraph_start, int) or not isinstance(paragraph_end, int):
-            continue
-        if paragraph_end > start_index and paragraph_start < end_index:
-            paragraph_starts.append(paragraph_start)
-
-    return paragraph_starts or [start_index]
-
-
 @server.tool(
     title="Update Paragraph Style",
     annotations=ToolAnnotations(
@@ -2311,8 +2285,8 @@ async def update_paragraph_style(
         try:
             paragraph_start_indices = None
             if nesting_level > 0:
-                paragraph_start_indices = await _get_paragraph_start_indices_in_range(
-                    service, document_id, start_index, end_index
+                paragraph_start_indices = await get_paragraph_start_indices_in_range(
+                    service, document_id, start_index, end_index, tab_id
                 )
             list_requests = create_bullet_list_request(
                 start_index,
