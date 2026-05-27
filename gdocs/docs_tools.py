@@ -44,7 +44,6 @@ from gdocs.docs_helpers import (
     create_delete_doc_tab_request,
     validate_suggestions_view_mode,
     create_update_paragraph_style_request,
-    get_paragraph_start_indices_in_range,
 )
 
 # Import document structure and table utilities
@@ -2279,24 +2278,33 @@ async def update_paragraph_style(
 
     # Add list creation if requested
     if list_type_value is not None:
-        # Default to level 0 if not specified
+        from gdocs.list_span_compiler import ListSpanCompiler, fetch_list_paragraphs
+
         nesting_level = list_nesting_level if list_nesting_level is not None else 0
         try:
-            paragraph_start_indices = None
-            if nesting_level > 0:
-                paragraph_start_indices = await get_paragraph_start_indices_in_range(
-                    service, document_id, start_index, end_index, tab_id
-                )
-            list_requests = create_bullet_list_request(
-                start_index,
-                end_index,
-                list_type_value,
-                nesting_level,
-                paragraph_start_indices=paragraph_start_indices,
-                doc_tab_id=tab_id,
-                bullet_preset=bullet_preset,
-                segment_id=segment_id,
+            compiler = ListSpanCompiler()
+            paras = await fetch_list_paragraphs(
+                service, document_id, tab_id=tab_id, segment_id=segment_id
             )
+            if list_type_value == "NONE":
+                list_requests, _virt, _span = compiler.remove_op(
+                    paras,
+                    start_index,
+                    end_index,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
+            else:
+                list_requests, _virt, _span, _depths = compiler.apply_op(
+                    paras,
+                    start_index,
+                    end_index,
+                    nesting_level,
+                    list_type_value,
+                    bullet_preset,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
             requests.extend(list_requests)
         except ValueError as e:
             return f"Error: {e}"

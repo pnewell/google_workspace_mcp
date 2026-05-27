@@ -279,6 +279,22 @@ class TestAdvancedPublicToolWiring:
     async def test_update_paragraph_style_list_allows_zero_start_at_body_beginning(
         self, service
     ):
+        service.documents.return_value.get.return_value.execute.return_value = {
+            "body": {
+                "content": [
+                    {
+                        "startIndex": 1,
+                        "endIndex": 20,
+                        "paragraph": {
+                            "elements": [
+                                {"textRun": {"content": "Hello world\n"}}
+                            ]
+                        },
+                    }
+                ]
+            }
+        }
+
         await _unwrap(docs_tools.update_paragraph_style)(
             service=service,
             user_google_email="user@example.com",
@@ -289,10 +305,13 @@ class TestAdvancedPublicToolWiring:
         )
 
         call_kwargs = service.documents.return_value.batchUpdate.call_args.kwargs
-        request = call_kwargs["body"]["requests"][0]["createParagraphBullets"]
+        requests = call_kwargs["body"]["requests"]
+        bullet_create = next(
+            r for r in requests if "createParagraphBullets" in r
+        )["createParagraphBullets"]
 
-        assert request["range"] == {"startIndex": 1, "endIndex": 20}
-        assert request["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
+        assert bullet_create["range"] == {"startIndex": 1, "endIndex": 20}
+        assert bullet_create["bulletPreset"] == "BULLET_DISC_CIRCLE_SQUARE"
 
     @pytest.mark.asyncio
     async def test_batch_update_doc_supports_named_range_and_document_style(

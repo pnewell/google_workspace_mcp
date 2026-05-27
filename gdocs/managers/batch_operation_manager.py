@@ -43,6 +43,7 @@ from gdocs.docs_helpers import (
     create_update_table_column_properties_request,
     validate_operation,
 )
+from gdocs.list_span_compiler import ListSpanCompiler, fetch_list_paragraphs
 from gdocs.managers.validation_manager import ValidationManager
 
 logger = logging.getLogger(__name__)
@@ -260,6 +261,8 @@ class BatchOperationManager:
         """
         requests = []
         operation_descriptions = []
+        paragraph_cache: dict[tuple, list] = {}
+        compiler_by_key: dict[tuple, ListSpanCompiler] = {}
 
         for i, op in enumerate(operations):
             # Validate operation structure
@@ -269,25 +272,69 @@ class BatchOperationManager:
 
             op_type = op.get("type")
 
-            if (
-                op_type == "create_bullet_list"
-                and op.get("nesting_level", 0) > 0
-                and not op.get("paragraph_start_indices")
-                and op.get("list_type", "UNORDERED") != "NONE"
-                and document_id
-            ):
-                from gdocs.docs_helpers import get_paragraph_start_indices_in_range
+            if op_type == "create_bullet_list" and document_id:
+                tab_id = op.get("tab_id")
+                segment_id = op.get("segment_id")
+                key = (tab_id, segment_id)
 
-                op = dict(op)
-                op["paragraph_start_indices"] = (
-                    await get_paragraph_start_indices_in_range(
+                if key not in paragraph_cache:
+                    paragraph_cache[key] = await fetch_list_paragraphs(
                         self.service,
                         document_id,
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                    )
+
+                compiler = compiler_by_key.setdefault(key, ListSpanCompiler())
+                paras = paragraph_cache[key]
+                list_type = op.get("list_type", "UNORDERED")
+
+                if list_type == "NONE":
+                    bullet_requests, virt, _span = compiler.remove_op(
+                        paras,
                         op["start_index"],
                         op["end_index"],
-                        op.get("tab_id"),
+                        tab_id=tab_id,
+                        segment_id=segment_id,
                     )
-                )
+                    paragraph_cache[key] = virt
+                    description = (
+                        f"remove bullets {op['start_index']}-{op['end_index']}"
+                    )
+                else:
+                    depth = (
+                        op["nesting_level"]
+                        if op.get("nesting_level") is not None
+                        else 0
+                    )
+                    bullet_requests, virt, _span, _depths = compiler.apply_op(
+                        paras,
+                        op["start_index"],
+                        op["end_index"],
+                        depth,
+                        list_type,
+                        op.get("bullet_preset"),
+                        tab_id=tab_id,
+                        segment_id=segment_id,
+                    )
+                    paragraph_cache[key] = virt
+                    if list_type == "UNORDERED":
+                        style = "bulleted"
+                    elif list_type == "CHECKBOX":
+                        style = "checkbox"
+                    else:
+                        style = "numbered"
+                    description = (
+                        f"create {style} list {op['start_index']}-{op['end_index']}"
+                    )
+                    if op.get("nesting_level") is not None:
+                        description += f" (nesting level {op['nesting_level']})"
+                    if op.get("bullet_preset"):
+                        description += f" using {op['bullet_preset']}"
+
+                requests.extend(bullet_requests)
+                operation_descriptions.append(description)
+                continue
 
             try:
                 # Build request based on operation type
