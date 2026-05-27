@@ -51,6 +51,7 @@ from gdocs.docs_structure import (
     parse_document_structure,
     find_tables,
     analyze_document_complexity,
+    parse_footnotes,
 )
 from gdocs.docs_tables import extract_table_as_data
 from gdocs.docs_markdown import (
@@ -1117,6 +1118,7 @@ async def batch_update_doc(
         {"type": "create_bullet_list", "start_index": 50, "end_index": 120,
          "list_type": "ORDERED"}
       ]
+      For table cells, take start/end ranges from tables[].cells[].elements[].
 
     ALTERNATIVE - FIND_REPLACE PATTERN (no indices needed at all):
       Insert text with unique placeholders, then use find_replace:
@@ -1239,6 +1241,13 @@ async def batch_update_doc(
                          optional: header_footer_type, section_break_index
                          Advanced only. For ordinary header/footer text, use
                          update_doc_headers_footers instead.
+      create_footnote  - required: (none)
+                         optional: index (int), end_of_segment (bool), tab_id
+                         Provide exactly one of 'index' or 'end_of_segment=true'.
+      delete_header    - required: header_id (str)
+                         optional: tab_id
+      delete_footer    - required: footer_id (str)
+                         optional: tab_id
       insert_image     - required: image_uri (str)
                          optional: index, width, height, tab_id, segment_id,
                                    end_of_segment
@@ -1437,6 +1446,7 @@ async def inspect_doc_structure(
     if tab_id and document_tab:
         analysis_doc["headers"] = document_tab.get("headers", {})
         analysis_doc["footers"] = document_tab.get("footers", {})
+        analysis_doc["footnotes"] = document_tab.get("footnotes", {})
         analysis_doc["documentStyle"] = document_tab.get("documentStyle", {})
     elif not tab_id and doc.get("tabs"):
         # Default to the first document tab for tab-aware header/footer inspection.
@@ -1453,6 +1463,7 @@ async def inspect_doc_structure(
         if first_tab_doc:
             analysis_doc["headers"] = first_tab_doc.get("headers", {})
             analysis_doc["footers"] = first_tab_doc.get("footers", {})
+            analysis_doc["footnotes"] = first_tab_doc.get("footnotes", {})
             analysis_doc["documentStyle"] = first_tab_doc.get("documentStyle", {})
 
     structure = parse_document_structure(analysis_doc)
@@ -1499,6 +1510,17 @@ async def inspect_doc_structure(
             result["tables"] = []
             for i, table in enumerate(structure["tables"]):
                 table_data = extract_table_as_data(table)
+                cells = [
+                    {
+                        "row": cell["row"],
+                        "column": cell["column"],
+                        "start_index": cell["start_index"],
+                        "end_index": cell["end_index"],
+                        "elements": cell["elements"],
+                    }
+                    for row in table.get("cells", [])
+                    for cell in row
+                ]
                 result["tables"].append(
                     {
                         "index": i,
@@ -1511,6 +1533,7 @@ async def inspect_doc_structure(
                             "columns": table["columns"],
                         },
                         "preview": table_data[:3] if table_data else [],  # First 3 rows
+                        "cells": cells,
                     }
                 )
 
@@ -1560,6 +1583,20 @@ async def inspect_doc_structure(
         footer_entries = _build_segment_inspection_entries(doc, structure, "footer")
         if footer_entries:
             result["footers"] = footer_entries
+
+    parsed_footnotes = parse_footnotes(analysis_doc)
+    if parsed_footnotes:
+        result["footnotes"] = {
+            footnote_id: {
+                "segment_id": footnote_id,
+                "start_index": footnote["start_index"],
+                "end_index": footnote["end_index"],
+                "content_preview": footnote.get("text_preview", ""),
+                "element_count": footnote.get("element_count", 0),
+                "elements": footnote.get("elements", []),
+            }
+            for footnote_id, footnote in parsed_footnotes.items()
+        }
 
     # Always include available tabs if no tab_id was specified
     if not tab_id:
@@ -1625,6 +1662,7 @@ def _build_segment_inspection_entries(
             "content_preview": segment_info.get("text_preview", ""),
             "element_count": segment_info.get("element_count", 0),
             "source": "segment_content",
+            "elements": segment_info.get("elements", []),
         }
 
     style_field_map = {
@@ -1651,6 +1689,7 @@ def _build_segment_inspection_entries(
                 "element_count": 0,
                 "source": f"documentStyle.{style_field}",
                 "variant": variant,
+                "elements": [],
             }
 
         for element in doc.get("body", {}).get("content", []):
@@ -1667,6 +1706,7 @@ def _build_segment_inspection_entries(
                     "element_count": 0,
                     "source": f"sectionStyle.{style_field}",
                     "variant": variant,
+                    "elements": [],
                 }
             break
 
@@ -2048,35 +2088,6 @@ async def export_doc_to_pdf(
 # ==============================================================================
 
 
-async def _get_paragraph_start_indices_in_range(
-    service: Any, document_id: str, start_index: int, end_index: int
-) -> list[int]:
-    """
-    Fetch paragraph start indices that overlap a target range.
-    """
-    doc_data = await asyncio.to_thread(
-        service.documents()
-        .get(
-            documentId=document_id,
-            fields="body/content(startIndex,endIndex,paragraph)",
-        )
-        .execute
-    )
-
-    paragraph_starts = []
-    for element in doc_data.get("body", {}).get("content", []):
-        if "paragraph" not in element:
-            continue
-        paragraph_start = element.get("startIndex")
-        paragraph_end = element.get("endIndex")
-        if not isinstance(paragraph_start, int) or not isinstance(paragraph_end, int):
-            continue
-        if paragraph_end > start_index and paragraph_start < end_index:
-            paragraph_starts.append(paragraph_start)
-
-    return paragraph_starts or [start_index]
-
-
 @server.tool(
     title="Update Paragraph Style",
     annotations=ToolAnnotations(
@@ -2267,24 +2278,33 @@ async def update_paragraph_style(
 
     # Add list creation if requested
     if list_type_value is not None:
-        # Default to level 0 if not specified
+        from gdocs.list_span_compiler import ListSpanCompiler, fetch_list_paragraphs
+
         nesting_level = list_nesting_level if list_nesting_level is not None else 0
         try:
-            paragraph_start_indices = None
-            if nesting_level > 0:
-                paragraph_start_indices = await _get_paragraph_start_indices_in_range(
-                    service, document_id, start_index, end_index
-                )
-            list_requests = create_bullet_list_request(
-                start_index,
-                end_index,
-                list_type_value,
-                nesting_level,
-                paragraph_start_indices=paragraph_start_indices,
-                doc_tab_id=tab_id,
-                bullet_preset=bullet_preset,
-                segment_id=segment_id,
+            compiler = ListSpanCompiler()
+            paras = await fetch_list_paragraphs(
+                service, document_id, tab_id=tab_id, segment_id=segment_id
             )
+            if list_type_value == "NONE":
+                list_requests, _virt, _span = compiler.remove_op(
+                    paras,
+                    start_index,
+                    end_index,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
+            else:
+                list_requests, _virt, _span, _depths = compiler.apply_op(
+                    paras,
+                    start_index,
+                    end_index,
+                    nesting_level,
+                    list_type_value,
+                    bullet_preset,
+                    tab_id=tab_id,
+                    segment_id=segment_id,
+                )
             requests.extend(list_requests)
         except ValueError as e:
             return f"Error: {e}"

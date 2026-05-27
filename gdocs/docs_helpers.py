@@ -5,6 +5,7 @@ This module provides utility functions for common Google Docs operations
 to simplify the implementation of document editing tools.
 """
 
+import asyncio
 import logging
 from typing import Dict, Any, Optional, List
 
@@ -1201,8 +1202,8 @@ def create_bullet_list_request(
         doc_tab_id: Optional ID of the tab to target
 
     Returns:
-        List of request dictionaries (insertText for nesting tabs if needed,
-        then createParagraphBullets)
+        List of request dictionaries (deleteParagraphBullets, optional insertText
+        for nesting tabs, then createParagraphBullets)
     """
     start_index = _normalize_body_start_index(start_index, doc_tab_id, segment_id)
 
@@ -1225,7 +1226,13 @@ def create_bullet_list_request(
         if nesting_level < 0 or nesting_level > 8:
             raise ValueError("nesting_level must be between 0 and 8")
 
-    requests = []
+    # createParagraphBullets does not absorb leading tabs on an already-bulleted paragraph.
+    # deleteParagraphBullets on the range first so create can absorb them; no-op if not bulleted.
+    requests = [
+        create_delete_bullet_list_request(
+            start_index, end_index, doc_tab_id, segment_id=segment_id
+        )
+    ]
 
     # Insert tabs for nesting if needed (nesting_level > 0).
     # For multi-paragraph ranges, callers should provide paragraph_start_indices.
@@ -1274,6 +1281,74 @@ def create_bullet_list_request(
     )
 
     return requests
+
+
+async def get_paragraph_start_indices_in_range(
+    service: Any,
+    document_id: str,
+    start_index: int,
+    end_index: int,
+    tab_id: Optional[str] = None,
+) -> list[int]:
+    """
+    Fetch paragraph start indices that overlap a target range.
+
+    Walks both top-level body paragraphs and paragraphs inside table cells
+    so that nesting_level tab-insertion targets every paragraph in the range.
+    """
+    from gdocs.docs_structure import parse_document_structure
+
+    fields = (
+        "body/content(startIndex,endIndex,paragraph,"
+        "table(tableRows(tableCells(content(startIndex,endIndex,paragraph)))))"
+    )
+
+    if tab_id:
+        doc_data = await asyncio.to_thread(
+            service.documents()
+            .get(
+                documentId=document_id,
+                includeTabsContent=True,
+                fields=f"tabs(tabProperties(tabId),documentTab({fields}))",
+            )
+            .execute
+        )
+        body = {}
+        for tab in doc_data.get("tabs", []):
+            if tab.get("tabProperties", {}).get("tabId") == tab_id:
+                body = tab.get("documentTab", {}).get("body", {})
+                break
+    else:
+        doc_data = await asyncio.to_thread(
+            service.documents()
+            .get(documentId=document_id, fields=fields)
+            .execute
+        )
+        body = doc_data.get("body", {})
+
+    structure = parse_document_structure({"body": body})
+
+    paragraph_starts = []
+    for element in structure["body"]:
+        el_start = element.get("start_index", 0)
+        el_end = element.get("end_index", 0)
+
+        if element["type"] == "paragraph":
+            if el_end > start_index and el_start < end_index:
+                paragraph_starts.append(el_start)
+
+        elif element["type"] == "table":
+            for row in element.get("cells", []):
+                for cell in row:
+                    for para in cell.get("elements", []):
+                        if para.get("type") != "paragraph":
+                            continue
+                        p_start = para.get("start_index", 0)
+                        p_end = para.get("end_index", 0)
+                        if p_end > start_index and p_start < end_index:
+                            paragraph_starts.append(p_start)
+
+    return sorted(set(paragraph_starts)) or [start_index]
 
 
 def create_delete_bullet_list_request(
@@ -1487,6 +1562,39 @@ def create_create_header_footer_request(
     raise ValueError("section_type must be 'header' or 'footer'")
 
 
+def create_create_footnote_request(
+    index: Optional[int],
+    end_of_segment: bool = False,
+    tab_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build a createFootnote request."""
+    return {
+        "createFootnote": _build_location(
+            index=index, tab_id=tab_id, end_of_segment=end_of_segment
+        )
+    }
+
+
+def create_delete_header_request(
+    header_id: str, tab_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Build a deleteHeader request."""
+    request: Dict[str, Any] = {"headerId": header_id}
+    if tab_id:
+        request["tabId"] = tab_id
+    return {"deleteHeader": request}
+
+
+def create_delete_footer_request(
+    footer_id: str, tab_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Build a deleteFooter request."""
+    request: Dict[str, Any] = {"footerId": footer_id}
+    if tab_id:
+        request["tabId"] = tab_id
+    return {"deleteFooter": request}
+
+
 def create_insert_table_row_request(
     table_start_index: int,
     row_index: int,
@@ -1697,6 +1805,9 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "update_document_style": [],
         "update_section_style": ["start_index", "end_index"],
         "create_header_footer": ["section_type"],
+        "create_footnote": [],
+        "delete_header": ["header_id"],
+        "delete_footer": ["footer_id"],
         "insert_image": ["image_uri"],
         "insert_doc_tab": ["title", "index"],
         "delete_doc_tab": ["tab_id"],
@@ -1735,6 +1846,7 @@ def validate_operation(operation: Dict[str, Any]) -> tuple[bool, str]:
         "insert_page_break",
         "insert_section_break",
         "insert_image",
+        "create_footnote",
     }:
         end_of_segment = operation.get("end_of_segment", False)
         if end_of_segment and "index" in operation:
